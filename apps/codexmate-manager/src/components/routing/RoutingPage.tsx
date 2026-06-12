@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { Network, RefreshCw, Save, Image } from "lucide-react";
+import { Network, RefreshCw, Image } from "lucide-react";
 import { NoticeToast } from "@/components/shared/NoticeToast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,11 +25,11 @@ export default function RoutingPage() {
   const [activeTab, setActiveTab] = useState("models");
   const [notice, setNotice] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const [testingIndex, setTestingIndex] = useState<number | null>(null);
-  const [savingIndex, setSavingIndex] = useState<number | null>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [fetchingModelsIndex, setFetchingModelsIndex] = useState<number | null>(null);
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<number, string[]>>({});
   const [advancedVisibleMap, setAdvancedVisibleMap] = useState<Record<number, boolean>>({});
+  const autoSaveTimerRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   const loadConfig = useCallback(async () => {
     try {
@@ -89,32 +89,6 @@ export default function RoutingPage() {
     }
   };
 
-  const saveProvider = async (index: number) => {
-    if (!config) return;
-    const provider = config.providers[index];
-    if (!provider || provider.builtin || provider.id === "openai") {
-      setNotice({ type: "error", text: "内置 provider 不可编辑" });
-      return;
-    }
-    if (!provider.id.trim()) {
-      setNotice({ type: "error", text: "请先填写模型名称" });
-      return;
-    }
-    setSavingIndex(index);
-    try {
-      const result = await invoke<CommandResult<RoutingConfigPayload>>("upsert_provider", {
-        provider,
-      });
-      setNotice({ type: result.status === "ok" ? "ok" : "error", text: result.message });
-      if (result.status === "ok") {
-        setConfig(result.config);
-      }
-    } catch (e: any) {
-      setNotice({ type: "error", text: String(e) });
-    } finally {
-      setSavingIndex(null);
-    }
-  };
 
   const removeProvider = async (index: number) => {
     if (!config) return;
@@ -225,14 +199,23 @@ export default function RoutingPage() {
     await saveConfig(updated);
   };
 
+
   const updateProvider = (index: number, updates: Partial<SmartProvider>) => {
     if (!config) return;
-    setConfig({
-      ...config,
-      providers: config.providers.map((p, i) =>
-        i === index ? { ...p, ...updates } : p
-      ),
-    });
+    const providers = config.providers.map((p, i) =>
+      i === index ? { ...p, ...updates } : p
+    );
+    setConfig({ ...config, providers });
+
+    // 非内置 provider：输入停止 1.5s 后自动保存
+    const provider = providers[index];
+    if (provider && !provider.builtin && provider.id !== "openai" && provider.id.trim()) {
+      if (autoSaveTimerRef.current[index]) clearTimeout(autoSaveTimerRef.current[index]);
+      autoSaveTimerRef.current[index] = setTimeout(() => {
+        void invoke("upsert_provider", { provider });
+        setNotice({ type: "ok", text: "已自动保存" });
+      }, 1500);
+    }
   };
 
   if (!config) {
@@ -277,13 +260,14 @@ export default function RoutingPage() {
             config={config}
             expandedIndex={expandedIndex}
             testingIndex={testingIndex}
-            savingIndex={savingIndex}
             fetchingModelsIndex={fetchingModelsIndex}
             fetchedModelsMap={fetchedModelsMap}
             advancedVisibleMap={advancedVisibleMap}
-            onToggleExpand={setExpandedIndex}
+            onToggleExpand={(idx) => {
+              // 折叠卡片时自动保存
+              setExpandedIndex(idx);
+            }}
             onUpdate={updateProvider}
-            onSave={saveProvider}
             onTest={testProvider}
             onFetchModels={fetchModels}
             onCopy={copyProvider}

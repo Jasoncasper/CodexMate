@@ -1,3 +1,4 @@
+import React from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -6,9 +7,10 @@ import {
   Download,
   FlaskConical,
   Image,
-  Save,
   Trash2,
   XCircle,
+  Search,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,13 +25,11 @@ interface ProviderCardProps {
   index: number;
   isExpanded: boolean;
   isTesting: boolean;
-  isSaving: boolean;
   isFetchingModels: boolean;
   fetchedModels: string[];
   showAdvanced: boolean;
   onToggleExpand: (index: number | null) => void;
   onUpdate: (index: number, updates: Partial<SmartProvider>) => void;
-  onSave: (index: number) => void;
   onTest: (index: number) => void;
   onFetchModels: (index: number) => void;
   onCopy: (index: number) => void;
@@ -38,15 +38,142 @@ interface ProviderCardProps {
   onToggleAdvanced: () => void;
 }
 
+const ModelSelector = React.memo(function ModelSelector({
+  value,
+  models,
+  isFetching,
+  baseUrl,
+  onChange,
+  onFetch,
+}: {
+  value: string;
+  models: string[];
+  isFetching: boolean;
+  baseUrl: string;
+  onChange: (id: string) => void;
+  onFetch: () => void;
+}) {
+  const [search, setSearch] = React.useState("");
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      document.addEventListener("mousedown", handler);
+    }
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const hasModels = models.length > 0;
+  const filtered = hasModels
+    ? models.filter((m) => m.toLowerCase().includes(search.toLowerCase()))
+    : [];
+  const showCurrent = value && !models.includes(value);
+
+  return (
+    <div className="flex gap-1" ref={containerRef}>
+      <div className="relative flex-1">
+        {hasModels ? (
+          <>
+            <div className="flex items-center gap-1">
+              <div className="relative flex-1">
+                <Input
+                  value={open ? search : value}
+                  onChange={(e) => {
+                    if (open) {
+                      setSearch(e.target.value);
+                    } else {
+                      onChange(e.target.value);
+                    }
+                  }}
+                  onFocus={() => { setOpen(true); setSearch(""); }}
+                  className="h-8 text-sm pr-7"
+                  placeholder="搜索或手动输入..."
+                />
+                {value && (
+                  <button
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 opacity-40 hover:opacity-100"
+                    onClick={(e) => { e.stopPropagation(); onChange(""); setSearch(""); }}
+                    type="button"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+            {open && (
+              <div className="absolute z-50 mt-1 w-full bg-popover border rounded-md shadow-md max-h-48 overflow-auto">
+                {showCurrent && (
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent text-muted-foreground"
+                    onClick={() => { onChange(value); setOpen(false); setSearch(""); }}
+                  >
+                    {value} (当前)
+                  </button>
+                )}
+                {search && (
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent italic text-muted-foreground"
+                    onClick={() => { onChange(search); setOpen(false); setSearch(""); }}
+                  >
+                    使用 "{search}" 作为模型ID
+                  </button>
+                )}
+                {filtered.length === 0 && !showCurrent && !search && (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">无匹配模型</p>
+                )}
+                {filtered.map((model) => (
+                  <button
+                    key={model}
+                    type="button"
+                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-accent ${model === value ? "font-medium bg-accent/50" : ""}`}
+                    onClick={() => { onChange(model); setOpen(false); setSearch(""); }}
+                  >
+                    {model}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <Input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="h-8 text-sm flex-1"
+            placeholder="openai/gpt-5"
+          />
+        )}
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 px-2 text-xs shrink-0"
+        title="从上游拉取可用模型列表"
+        onClick={(e) => { e.stopPropagation(); onFetch(); }}
+        disabled={isFetching || !baseUrl.trim()}
+      >
+        <Download className={`h-3 w-3 mr-1 ${isFetching ? "animate-spin" : ""}`} />
+        拉取
+      </Button>
+    </div>
+  );
+});
+
 export function ProviderCard({
   provider,
   index,
   isExpanded,
   isTesting,
-  isSaving,
   onToggleExpand,
   onUpdate,
-  onSave,
   onTest,
   onFetchModels,
   onCopy,
@@ -118,16 +245,6 @@ export function ProviderCard({
                 <Button
                   variant="ghost"
                   size="sm"
-                  title="保存模型"
-                  onClick={() => onSave(index)}
-                  disabled={isSaving}
-                >
-                  <Save className={`h-4 w-4 ${isSaving ? "animate-pulse" : ""}`} />
-                  {isSaving ? " 保存中" : ""}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
                   title="测试连接"
                   onClick={() => onTest(index)}
                   disabled={isTesting}
@@ -181,42 +298,14 @@ export function ProviderCard({
               <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">模型名称（模型ID）</Label>
-              <div className="flex gap-1">
-                {fetchedModels.length > 0 ? (
-                  <select
-                    className="h-8 flex-1 text-sm border rounded-md bg-background px-2"
-                    value={provider.id}
-                    onChange={(e) => onUpdate(index, { id: e.target.value })}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <option value="">手动输入...</option>
-                    {provider.id && !fetchedModels.includes(provider.id) && (
-                      <option value={provider.id}>{provider.id} (当前)</option>
-                    )}
-                    {fetchedModels.map((modelId) => (
-                      <option key={modelId} value={modelId}>{modelId}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <Input
-                    value={provider.id}
-                    onChange={(e) => onUpdate(index, { id: e.target.value })}
-                    className="h-8 text-sm flex-1"
-                    placeholder="openai/gpt-5"
-                  />
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 px-2 text-xs shrink-0"
-                  title="从上游拉取可用模型列表"
-                  onClick={(e) => { e.stopPropagation(); onFetchModels(index); }}
-                  disabled={isFetchingModels || !provider.base_url.trim()}
-                >
-                  <Download className={`h-3 w-3 mr-1 ${isFetchingModels ? "animate-spin" : ""}`} />
-                  拉取
-                </Button>
-              </div>
+              <ModelSelector
+                value={provider.id}
+                models={fetchedModels}
+                isFetching={isFetchingModels}
+                baseUrl={provider.base_url}
+                onChange={(id) => onUpdate(index, { id })}
+                onFetch={() => onFetchModels(index)}
+              />
             </div>
             <div>
               <Label className="text-xs">协议</Label>

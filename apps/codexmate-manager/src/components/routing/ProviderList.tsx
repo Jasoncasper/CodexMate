@@ -7,13 +7,11 @@ interface ProviderListProps {
   config: SmartRouterConfig;
   expandedIndex: number | null;
   testingIndex: number | null;
-  savingIndex: number | null;
   fetchingModelsIndex: number | null;
   fetchedModelsMap: Record<number, string[]>;
   advancedVisibleMap: Record<number, boolean>;
   onToggleExpand: (index: number | null) => void;
   onUpdate: (index: number, updates: Partial<SmartProvider>) => void;
-  onSave: (index: number) => void;
   onTest: (index: number) => void;
   onFetchModels: (index: number) => void;
   onCopy: (index: number) => void;
@@ -27,13 +25,11 @@ export function ProviderList({
   config,
   expandedIndex,
   testingIndex,
-  savingIndex,
   fetchingModelsIndex,
   fetchedModelsMap,
   advancedVisibleMap,
   onToggleExpand,
   onUpdate,
-  onSave,
   onTest,
   onFetchModels,
   onCopy,
@@ -68,13 +64,11 @@ export function ProviderList({
             index={index}
             isExpanded={expandedIndex === index}
             isTesting={testingIndex === index}
-            isSaving={savingIndex === index}
             isFetchingModels={fetchingModelsIndex === index}
             fetchedModels={fetchedModelsMap[index] || []}
             showAdvanced={advancedVisibleMap[index] ?? false}
             onToggleExpand={onToggleExpand}
             onUpdate={onUpdate}
-            onSave={onSave}
             onTest={onTest}
             onFetchModels={onFetchModels}
             onCopy={onCopy}
