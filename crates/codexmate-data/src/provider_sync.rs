@@ -84,7 +84,7 @@ pub fn run_provider_sync(codex_home: Option<&Path>) -> ProviderSyncResult {
             .filter_map(|change| Some((change.thread_id.clone()?, change.cwd.clone()?)))
             .collect::<HashMap<_, _>>();
         let sqlite_update_count = count_sqlite_updates(
-            &home.join("state_5.sqlite"),
+            &home.join("sqlite/state_5.sqlite"),
             &target_provider,
             &thread_ids_with_user_events,
             &cwd_by_thread_id,
@@ -106,7 +106,7 @@ pub fn run_provider_sync(codex_home: Option<&Path>) -> ProviderSyncResult {
         apply_session_changes(&rewrite_changes)?;
         let apply_result = (|| -> anyhow::Result<usize> {
             let sqlite_rows_updated = apply_sqlite_update(
-                &home.join("state_5.sqlite"),
+                &home.join("sqlite/state_5.sqlite"),
                 &target_provider,
                 &thread_ids_with_user_events,
                 &cwd_by_thread_id,
@@ -338,7 +338,7 @@ fn create_backup(
     }
     let db_dir = backup_dir.join("db");
     for name in ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"] {
-        let source = home.join(name);
+        let source = home.join("sqlite").join(name);
         if source.exists() {
             fs::create_dir_all(&db_dir)?;
             fs::copy(&source, db_dir.join(name))?;

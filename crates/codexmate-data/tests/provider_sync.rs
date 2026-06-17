@@ -7,6 +7,16 @@ use std::time::{Duration, SystemTime};
 use tempfile::tempdir;
 
 fn write_rollout(path: &Path, provider: &str, thread_id: &str, cwd: &str) {
+    write_rollout_with_model(path, provider, thread_id, cwd, None);
+}
+
+fn write_rollout_with_model(
+    path: &Path,
+    provider: &str,
+    thread_id: &str,
+    cwd: &str,
+    model: Option<&str>,
+) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let first = json!({
         "type": "session_meta",
@@ -17,10 +27,21 @@ fn write_rollout(path: &Path, provider: &str, thread_id: &str, cwd: &str) {
         }
     });
     let event = json!({"type": "event_msg", "payload": {"type": "user_message"}});
-    fs::write(path, format!("{first}\n{event}\n")).unwrap();
+    let model_event = model
+        .map(|model| {
+            format!(
+                "{}\n",
+                json!({"type": "event_msg", "payload": {"model": model}})
+            )
+        })
+        .unwrap_or_default();
+    fs::write(path, format!("{first}\n{event}\n{model_event}")).unwrap();
 }
 
 fn create_state_db(path: &Path) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
     let db = Connection::open(path).unwrap();
     db.execute(
         "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, archived INTEGER, has_user_event INTEGER, cwd TEXT)",
@@ -42,7 +63,7 @@ fn provider_sync_updates_rollout_sqlite_visibility_and_creates_backup() {
     fs::write(home.join("config.toml"), "model_provider = \"apigather\"\n").unwrap();
     let rollout = home.join("sessions/2026/rollout-abc.jsonl");
     write_rollout(&rollout, "openai", "thread-1", "C:/workspace");
-    create_state_db(&home.join("state_5.sqlite"));
+    create_state_db(&home.join("sqlite/state_5.sqlite"));
 
     let result = run_provider_sync(Some(&home));
 
@@ -59,7 +80,7 @@ fn provider_sync_updates_rollout_sqlite_visibility_and_creates_backup() {
     )
     .unwrap();
     assert_eq!(first["payload"]["model_provider"], "apigather");
-    let db = Connection::open(home.join("state_5.sqlite")).unwrap();
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
     let row = db
         .query_row(
             "SELECT model_provider, has_user_event, cwd FROM threads WHERE id = 'thread-1'",
@@ -94,7 +115,7 @@ fn provider_sync_repairs_sqlite_when_rollout_provider_matches_and_normalizes_pat
         "thread-1",
         "\\\\?\\C:\\workspace",
     );
-    create_state_db(&home.join("state_5.sqlite"));
+    create_state_db(&home.join("sqlite/state_5.sqlite"));
     fs::write(
         home.join(".codex-global-state.json"),
         json!({
@@ -112,7 +133,7 @@ fn provider_sync_repairs_sqlite_when_rollout_provider_matches_and_normalizes_pat
     assert_eq!(result.status, ProviderSyncStatus::Synced);
     assert_eq!(result.changed_session_files, 0);
     assert_eq!(result.sqlite_rows_updated, 1);
-    let db = Connection::open(home.join("state_5.sqlite")).unwrap();
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
     let row: String = db
         .query_row("SELECT cwd FROM threads WHERE id = 'thread-1'", [], |row| {
             row.get(0)
@@ -146,7 +167,7 @@ fn provider_sync_adds_missing_workspace_root_from_thread_cwd() {
         "thread-1",
         "/Users/admins/CodexMate",
     );
-    create_state_db(&home.join("state_5.sqlite"));
+    create_state_db(&home.join("sqlite/state_5.sqlite"));
     fs::write(
         home.join(".codex-global-state.json"),
         json!({
@@ -183,13 +204,14 @@ fn provider_sync_restores_rollout_first_line_when_later_step_fails() {
     fs::write(home.join("config.toml"), "model_provider = \"apigather\"\n").unwrap();
     let rollout = home.join("sessions/rollout-needs-rewrite.jsonl");
     write_rollout(&rollout, "openai", "thread-1", "C:/workspace");
+    fs::create_dir_all(home.join("sqlite")).unwrap();
     let original_first_line = fs::read_to_string(&rollout)
         .unwrap()
         .lines()
         .next()
         .unwrap()
         .to_string();
-    let db = Connection::open(home.join("state_5.sqlite")).unwrap();
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
     db.execute(
         "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, archived INTEGER, has_user_event INTEGER, cwd TEXT)",
         [],
@@ -232,7 +254,8 @@ fn provider_sync_rolls_back_sqlite_provider_update_when_later_update_fails() {
         "thread-1",
         "C:/workspace",
     );
-    let db = Connection::open(home.join("state_5.sqlite")).unwrap();
+    fs::create_dir_all(home.join("sqlite")).unwrap();
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
     db.execute(
         "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, archived INTEGER, has_user_event INTEGER, cwd TEXT)",
         [],
@@ -253,7 +276,7 @@ fn provider_sync_rolls_back_sqlite_provider_update_when_later_update_fails() {
     let result = run_provider_sync(Some(&home));
 
     assert_eq!(result.status, ProviderSyncStatus::Skipped);
-    let db = Connection::open(home.join("state_5.sqlite")).unwrap();
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
     let row = db
         .query_row(
             "SELECT model_provider, has_user_event, cwd FROM threads WHERE id = 'thread-1'",
@@ -342,4 +365,86 @@ fn provider_sync_preserves_rollout_mtime() {
         drift < Duration::from_secs(2),
         "mtime drifted by {drift:?}, expected < 2s"
     );
+}
+
+#[test]
+fn provider_sync_direct_mode_sets_every_session_provider_to_openai() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join(".codex");
+    fs::create_dir(&home).unwrap();
+    fs::write(home.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+    let rollout = home.join("sessions/rollout-direct.jsonl");
+    write_rollout(&rollout, "custom", "thread-1", "C:/workspace");
+    create_state_db(&home.join("sqlite/state_5.sqlite"));
+
+    let result = run_provider_sync(Some(&home));
+
+    assert_eq!(result.status, ProviderSyncStatus::Synced);
+    assert_eq!(result.target_provider, "openai");
+    assert_eq!(result.changed_session_files, 1);
+    assert_eq!(result.sqlite_rows_updated, 1);
+    let first: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(&rollout)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first["payload"]["model_provider"], "openai");
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
+    let provider: String = db
+        .query_row(
+            "SELECT model_provider FROM threads WHERE id = 'thread-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(provider, "openai");
+}
+
+#[test]
+fn provider_sync_proxy_mode_sets_every_session_provider_to_custom() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join(".codex");
+    fs::create_dir(&home).unwrap();
+    fs::write(home.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+    let rollout = home.join("sessions/rollout-proxy.jsonl");
+    write_rollout(&rollout, "openai", "thread-1", "C:/workspace");
+    fs::create_dir_all(home.join("sqlite")).unwrap();
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
+    db.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, model TEXT, archived INTEGER, has_user_event INTEGER, cwd TEXT)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO threads VALUES ('thread-1', 'openai', 'gpt-5.5', 0, 0, 'C:/old')",
+        [],
+    )
+    .unwrap();
+    drop(db);
+
+    let result = run_provider_sync(Some(&home));
+
+    assert_eq!(result.status, ProviderSyncStatus::Synced);
+    assert_eq!(result.target_provider, "custom");
+    let first: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(&rollout)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first["payload"]["model_provider"], "custom");
+    let db = Connection::open(home.join("sqlite/state_5.sqlite")).unwrap();
+    let row = db
+        .query_row(
+            "SELECT model_provider, model FROM threads WHERE id = 'thread-1'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, ("custom".to_string(), "gpt-5.5".to_string()));
 }
