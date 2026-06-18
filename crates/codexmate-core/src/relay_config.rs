@@ -722,7 +722,10 @@ fn provider_table_exists(doc: &DocumentMut, provider_id: &str) -> bool {
         .is_some()
 }
 
-pub fn sync_scoped_model_provider(doc: &mut DocumentMut, helper_base_url: &str) -> anyhow::Result<bool> {
+pub fn sync_scoped_model_provider(
+    doc: &mut DocumentMut,
+    helper_base_url: &str,
+) -> anyhow::Result<bool> {
     let mut changed = false;
     if active_provider_id(doc).as_deref() != Some(RELAY_PROVIDER) {
         set_provider_id(doc, RELAY_PROVIDER);
@@ -773,6 +776,14 @@ pub fn clear_scoped_model_provider_if_managed(
         changed = true;
     }
     changed
+}
+
+pub fn set_openai_model_provider_for_direct_mode(doc: &mut DocumentMut) -> bool {
+    if active_provider_id(doc).as_deref() == Some("openai") {
+        return false;
+    }
+    doc["model_provider"] = toml_edit::value("openai");
+    true
 }
 
 pub fn parse_toml_document(contents: &str) -> anyhow::Result<DocumentMut> {
@@ -1436,7 +1447,11 @@ fn account_label_from_jwt(token: &str) -> Option<String> {
 }
 
 /// 按 session_id 查找并更新 rollout 文件中的 model_provider
-pub fn write_session_provider(home: &Path, session_id: &str, provider: &str) -> anyhow::Result<bool> {
+pub fn write_session_provider(
+    home: &Path,
+    session_id: &str,
+    provider: &str,
+) -> anyhow::Result<bool> {
     for dir_name in &["sessions", "archived_sessions"] {
         let root = home.join(dir_name);
         if !root.exists() {

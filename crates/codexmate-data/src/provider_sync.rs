@@ -83,12 +83,18 @@ pub fn run_provider_sync(codex_home: Option<&Path>) -> ProviderSyncResult {
             .iter()
             .filter_map(|change| Some((change.thread_id.clone()?, change.cwd.clone()?)))
             .collect::<HashMap<_, _>>();
-        let sqlite_update_count = count_sqlite_updates(
-            &home.join("sqlite/state_5.sqlite"),
-            &target_provider,
-            &thread_ids_with_user_events,
-            &cwd_by_thread_id,
-        )?;
+        let sqlite_paths = state_db_paths(&home);
+        let sqlite_update_count = sqlite_paths
+            .iter()
+            .map(|path| {
+                count_sqlite_updates(
+                    path,
+                    &target_provider,
+                    &thread_ids_with_user_events,
+                    &cwd_by_thread_id,
+                )
+            })
+            .sum::<anyhow::Result<usize>>()?;
         let global_state_update_count =
             count_global_state_updates(&home.join(".codex-global-state.json"), &cwd_by_thread_id)?;
         if rewrite_changes.is_empty() && sqlite_update_count == 0 && global_state_update_count == 0
@@ -105,12 +111,17 @@ pub fn run_provider_sync(codex_home: Option<&Path>) -> ProviderSyncResult {
         let backup_dir = create_backup(&home, &target_provider, &rewrite_changes)?;
         apply_session_changes(&rewrite_changes)?;
         let apply_result = (|| -> anyhow::Result<usize> {
-            let sqlite_rows_updated = apply_sqlite_update(
-                &home.join("sqlite/state_5.sqlite"),
-                &target_provider,
-                &thread_ids_with_user_events,
-                &cwd_by_thread_id,
-            )?;
+            let sqlite_rows_updated = sqlite_paths
+                .iter()
+                .map(|path| {
+                    apply_sqlite_update(
+                        path,
+                        &target_provider,
+                        &thread_ids_with_user_events,
+                        &cwd_by_thread_id,
+                    )
+                })
+                .sum::<anyhow::Result<usize>>()?;
             apply_global_state_update(&home.join(".codex-global-state.json"), &cwd_by_thread_id)?;
             prune_backups(&home)?;
             Ok(sqlite_rows_updated)
@@ -167,6 +178,13 @@ fn dirs_home() -> PathBuf {
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn state_db_paths(home: &Path) -> Vec<PathBuf> {
+    vec![
+        home.join("state_5.sqlite"),
+        home.join("sqlite/state_5.sqlite"),
+    ]
 }
 
 fn read_current_provider(path: &Path) -> String {
@@ -331,6 +349,12 @@ fn create_backup(
         ".codex-global-state.json",
         ".codex-global-state.json.bak",
     ] {
+        let source = home.join(name);
+        if source.exists() {
+            fs::copy(&source, backup_dir.join(name))?;
+        }
+    }
+    for name in ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"] {
         let source = home.join(name);
         if source.exists() {
             fs::copy(&source, backup_dir.join(name))?;

@@ -111,7 +111,10 @@ pub fn startup_options() -> CommandResult<StartupPayload> {
 }
 
 pub fn startup_should_show_update() -> bool {
-    should_show_update(std::env::args(), std::env::var("CODEXMATE_SHOW_UPDATE").ok().as_deref())
+    should_show_update(
+        std::env::args(),
+        std::env::var("CODEXMATE_SHOW_UPDATE").ok().as_deref(),
+    )
 }
 
 fn should_show_update<I, S>(args: I, env_value: Option<&str>) -> bool
@@ -383,12 +386,7 @@ fn strip_model_provider_from_toml(contents: &str) -> String {
     let Ok(mut doc) = codexmate_core::relay_config::parse_toml_document(contents) else {
         return contents.to_string();
     };
-    let helper_base_url =
-        codexmate_core::protocol_proxy::local_responses_proxy_base_url(default_helper_port());
-    codexmate_core::relay_config::clear_scoped_model_provider_if_managed(
-        &mut doc,
-        &helper_base_url,
-    );
+    codexmate_core::relay_config::set_openai_model_provider_for_direct_mode(&mut doc);
     doc.to_string()
 }
 
@@ -826,7 +824,10 @@ pub fn get_codex_mode() -> CommandResult<Value> {
         .unwrap_or("direct");
     CommandResult {
         status: "ok".to_string(),
-        message: format!("当前模式: {}", if mode == "proxy" { "代理" } else { "直连" }),
+        message: format!(
+            "当前模式: {}",
+            if mode == "proxy" { "代理" } else { "直连" }
+        ),
         payload: json!({"mode": mode}),
     }
 }
@@ -860,9 +861,9 @@ pub fn set_codex_mode(mode: String) -> CommandResult<Value> {
     };
 
     let content = if mode == "direct" {
-        codexmate_core::relay_config::ensure_trailing_newline(
-            strip_model_provider_from_toml(&existing)
-        )
+        codexmate_core::relay_config::ensure_trailing_newline(strip_model_provider_from_toml(
+            &existing,
+        ))
     } else {
         codexmate_core::relay_config::ensure_trailing_newline(doc.to_string())
     };
@@ -895,7 +896,11 @@ pub fn set_codex_mode(mode: String) -> CommandResult<Value> {
         message: format!(
             "已切换到{}模式{}",
             if mode == "proxy" { "代理" } else { "直连" },
-            if synced > 0 { format!("，已同步 {synced} 个会话") } else { String::new() }
+            if synced > 0 {
+                format!("，已同步 {synced} 个会话")
+            } else {
+                String::new()
+            }
         ),
         payload: json!({
             "mode": mode,
@@ -918,7 +923,11 @@ pub fn restart_codex(mode: String, request: LaunchRequest) -> CommandResult<Valu
         } else {
             request.app_path.trim().to_string()
         };
-        match std::process::Command::new("open").arg("-a").arg(&app_path).spawn() {
+        match std::process::Command::new("open")
+            .arg("-a")
+            .arg(&app_path)
+            .spawn()
+        {
             Ok(_) => CommandResult {
                 status: "ok".to_string(),
                 message: "Codex 已启动（直连模式）".to_string(),
@@ -934,7 +943,6 @@ pub fn restart_codex(mode: String, request: LaunchRequest) -> CommandResult<Valu
         spawn_codexmate_launch(request, "Codex 已启动（代理模式）")
     }
 }
-
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -971,7 +979,8 @@ pub async fn fetch_provider_models(
             },
         };
     }
-    let models_url = codexmate_core::protocol_proxy::models_url_with(&base_url, provider.use_full_url);
+    let models_url =
+        codexmate_core::protocol_proxy::models_url_with(&base_url, provider.use_full_url);
     let user_agent = if provider.user_agent.trim().is_empty() {
         format!("CodexMate/{}", codexmate_core::version::VERSION)
     } else {
@@ -997,7 +1006,9 @@ pub async fn fetch_provider_models(
                     .map(|items| {
                         items
                             .iter()
-                            .filter_map(|item| item.get("id").and_then(|id| id.as_str()).map(String::from))
+                            .filter_map(|item| {
+                                item.get("id").and_then(|id| id.as_str()).map(String::from)
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -1211,8 +1222,9 @@ mod tests {
     }
 
     #[test]
-    fn direct_mode_config_removes_managed_provider_definition() {
+    fn direct_mode_config_preserves_managed_provider_definition_for_session_restore() {
         let config = r#"
+model = "deepseek-v4-flash:deepseek-v4-flash"
 model_provider = "custom"
 
 [model_providers.custom]
@@ -1223,8 +1235,10 @@ base_url = "http://127.0.0.1:57321/v1"
 
         let direct = strip_model_provider_from_toml(config);
 
-        assert!(!direct.contains("model_provider = \"custom\""));
-        assert!(!direct.contains("[model_providers.custom]"));
+        assert!(direct.contains("model_provider = \"openai\""));
+        assert!(direct.contains("[model_providers.custom]"));
+        assert!(direct.contains("base_url = \"http://127.0.0.1:57321/v1\""));
+        assert!(direct.contains("model = \"deepseek-v4-flash:deepseek-v4-flash\""));
     }
 
     #[test]
@@ -1241,7 +1255,10 @@ base_url = "http://127.0.0.1:57321/v1"
 
     #[test]
     fn official_openai_provider_is_direct_mode() {
-        assert_eq!(codex_mode_from_config("model_provider = \"openai\"\n"), "direct");
+        assert_eq!(
+            codex_mode_from_config("model_provider = \"openai\"\n"),
+            "direct"
+        );
     }
 
     #[test]
