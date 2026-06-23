@@ -188,11 +188,11 @@ fn provider_sync_adds_missing_workspace_root_from_thread_cwd() {
             .unwrap();
     assert_eq!(
         state["electron-saved-workspace-roots"],
-        json!(["/Users/admins/codexplus", "/Users/admins/CodexMate"])
+        json!(["/Users/admins/codexplus"])
     );
     assert_eq!(
         state["project-order"],
-        json!(["/Users/admins/codexplus", "/Users/admins/CodexMate"])
+        json!(["/Users/admins/codexplus"])
     );
 }
 

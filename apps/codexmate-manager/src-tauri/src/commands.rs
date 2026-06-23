@@ -382,6 +382,7 @@ fn sync_all_session_providers(home: &Path) -> codexmate_data::ProviderSyncResult
     codexmate_data::run_provider_sync(Some(home))
 }
 
+#[allow(dead_code)]
 fn strip_model_provider_from_toml(contents: &str) -> String {
     let Ok(mut doc) = codexmate_core::relay_config::parse_toml_document(contents) else {
         return contents.to_string();
@@ -860,13 +861,10 @@ pub fn set_codex_mode(mode: String) -> CommandResult<Value> {
         )
     };
 
-    let content = if mode == "direct" {
-        codexmate_core::relay_config::ensure_trailing_newline(strip_model_provider_from_toml(
-            &existing,
-        ))
-    } else {
-        codexmate_core::relay_config::ensure_trailing_newline(doc.to_string())
-    };
+    if mode == "direct" {
+        codexmate_core::relay_config::set_openai_model_provider_for_direct_mode(&mut doc);
+    }
+    let content = codexmate_core::relay_config::ensure_trailing_newline(doc.to_string());
     if let Err(e) = std::fs::write(&config_path, content.as_bytes()) {
         return CommandResult {
             status: "failed".to_string(),

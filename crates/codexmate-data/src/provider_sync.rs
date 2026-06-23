@@ -523,20 +523,19 @@ fn load_global_state(path: &Path) -> anyhow::Result<Map<String, Value>> {
 
 fn normalized_global_state(
     state: &Map<String, Value>,
-    cwd_by_thread_id: &HashMap<String, String>,
+    _cwd_by_thread_id: &HashMap<String, String>,
 ) -> Map<String, Value> {
     let mut next = Map::new();
-    let discovered_roots = dedupe_paths(cwd_by_thread_id.values().cloned().collect());
     if let Some(value) = state.get("electron-saved-workspace-roots") {
         next.insert(
             "electron-saved-workspace-roots".to_string(),
-            json!(merge_workspace_roots(path_array(value), &discovered_roots)),
+            json!(dedupe_paths(path_array(value))),
         );
     }
     if let Some(value) = state.get("project-order") {
         next.insert(
             "project-order".to_string(),
-            json!(merge_workspace_roots(path_array(value), &discovered_roots)),
+            json!(dedupe_paths(path_array(value))),
         );
     }
     if let Some(value) = state.get("active-workspace-roots") {
@@ -633,15 +632,6 @@ fn dedupe_paths(paths: Vec<String>) -> Vec<String> {
     result
 }
 
-fn merge_workspace_roots(existing: Vec<String>, discovered: &[String]) -> Vec<String> {
-    let mut merged = dedupe_paths(existing);
-    for path in discovered {
-        if !merged.iter().any(|existing| existing == path) {
-            merged.push(path.clone());
-        }
-    }
-    merged
-}
 
 fn prune_backups(home: &Path) -> anyhow::Result<()> {
     let root = home.join("backups_state/provider-sync");
