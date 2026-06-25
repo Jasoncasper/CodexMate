@@ -1,6 +1,20 @@
 # 更新日志
 
 
+## v1.0.7 (2026-06-25)
+
+### Bug 修复
+
+- 修复路由引擎 target_model 为空时透传外部模型名（如 gpt-5.4）到上游的问题，改为使用 provider.id 作为默认上游模型名
+- 修复 routing.toml 不存在时同样的问题
+
+### 新功能
+
+- 新增 provider 级并发控制，支持 routing.toml 中配置 max_concurrent 限制单个 provider 的并发请求数
+- 新增 429/5xx 自动重试机制，支持配置 max_retries 和 retry_delay_ms
+
+
+
 ## v1.0.6 (2026-06-23)
 
 ### Bug 修复

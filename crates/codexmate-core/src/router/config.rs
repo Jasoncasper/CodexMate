@@ -89,10 +89,16 @@ pub struct SmartProvider {
     /// 是否支持大上下文
     #[serde(default)]
     pub supports_large_context: bool,
+    /// 最大并发请求数，0 表示不限制
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+fn default_max_concurrent() -> u32 {
+    2
 }
 
 /// 供应商协议类型

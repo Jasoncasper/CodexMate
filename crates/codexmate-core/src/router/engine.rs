@@ -100,7 +100,7 @@ impl RouterEngine {
             .find(|p| p.enabled && provider_matches_model(p, &request.model))
         {
             decision = RouteDecision {
-                target_model: resolve_target(p, &request.model),
+                target_model: resolve_target(p, &p.id),
                 provider: p.clone(),
                 rule_name: "pattern-match".to_string(),
             };
@@ -123,7 +123,7 @@ impl RouterEngine {
                     .iter()
                     .any(|fp| fp.enabled && fp.id == config.fallback_provider);
             decision = RouteDecision {
-                target_model: resolve_target(p, &request.model),
+                target_model: resolve_target(p, &p.id),
                 provider: p.clone(),
                 rule_name: if is_fallback { "fallback-provider" } else { "default" }.to_string(),
             };
@@ -171,6 +171,7 @@ mod tests {
             user_agent: String::new(),
             max_context: 0,
             supports_large_context: false,
+            max_concurrent: 2,
         }
     }
 

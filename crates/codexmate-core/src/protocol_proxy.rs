@@ -4,8 +4,10 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
+use tokio::sync::Semaphore;
 
 pub const DEFAULT_PROTOCOL_PROXY_PORT: u16 = 57321;
 const THINK_OPEN_TAG: &str = "<think>";
@@ -25,6 +27,22 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
     "top_logprobs",
     "user",
 ];
+
+// ── 全局 provider 并发控制 ──
+
+static PROVIDER_SEMAPHORES: OnceLock<Mutex<BTreeMap<String, Arc<Semaphore>>>> = OnceLock::new();
+
+fn provider_semaphore(provider_id: &str, max_concurrent: u32) -> Arc<Semaphore> {
+    let map = PROVIDER_SEMAPHORES.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(sem) = guard.get(provider_id) {
+        return Arc::clone(sem);
+    }
+    let permits = if max_concurrent == 0 { 512 } else { max_concurrent as usize };
+    let sem = Arc::new(Semaphore::new(permits));
+    guard.insert(provider_id.to_string(), Arc::clone(&sem));
+    sem
+}
 
 fn provider_post_request(
     client: &reqwest::Client,
@@ -677,10 +695,11 @@ pub async fn open_routed_proxy_request(
         (decision, Some(router))
     } else {
         let provider = load_default_router_provider()?;
+        let target_model = provider.id.clone();
         (
             crate::router::engine::RouteDecision {
                 provider,
-                target_model: context.model.clone(),
+                target_model,
                 rule_name: "default".to_string(),
             },
             None,
@@ -720,9 +739,25 @@ pub async fn open_routed_proxy_request(
     }
 
 
-    // 发送请求（含图片时上游报错则剥离图片重试一次）
+    // ── 下游并发限流 ──
+    let semaphore = provider_semaphore(&provider.id, provider.max_concurrent);
+    let _permit = semaphore
+        .acquire()
+        .await
+        .expect("semaphore should never be closed");
+
+    // ── 获取重试配置 ──
+    let (max_retries, retry_delay_ms) = if let Some(ref router) = router {
+        let cfg = router.get_config().await;
+        (cfg.fallback.max_retries, cfg.fallback.retry_delay_ms)
+    } else {
+        (3, 1000)
+    };
+
+    // 发送请求（含图片剥离和 429/5xx 重试）
     let (upstream, rule_name) = {
-        let mut attempts = 0u8;
+        let mut attempt = 0u32;
+        let mut image_stripped = false;
         let mut chat_request = chat_request;
         loop {
             let client = reqwest::Client::new();
@@ -736,15 +771,40 @@ pub async fn open_routed_proxy_request(
                 .await?;
 
             let status = resp.status();
-            let is_client_err = status.is_client_error();
-            let success = status.is_success();
-            if success || attempts >= 1 || !context.has_image || !is_client_err {
+            let is_retryable = (status.as_u16() == 429 || status.is_server_error()) && !is_stream;
+            let is_image_err = status.is_client_error()
+                && status.as_u16() != 429
+                && context.has_image
+                && !image_stripped;
+
+            if status.is_success() {
                 break (resp, decision.rule_name.clone());
             }
 
-            // 剥离图片并重试
-            strip_image_content_from_chat_request(&mut chat_request);
-            attempts += 1;
+            if is_image_err {
+                // 剥离图片并重试一次
+                strip_image_content_from_chat_request(&mut chat_request);
+                image_stripped = true;
+                attempt += 1;
+                continue;
+            }
+
+            if is_retryable && attempt < max_retries {
+                let delay_ms = retry_delay_ms * (1u64 << attempt.min(5));
+                eprintln!(
+                    "[codexmate] 上游 {} 返回 {}，{}/{} 次重试，等待 {}ms",
+                    provider.id,
+                    status.as_u16(),
+                    attempt + 1,
+                    max_retries,
+                    delay_ms
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                attempt += 1;
+                continue;
+            }
+
+            break (resp, decision.rule_name.clone());
         }
     };
 
@@ -3674,6 +3734,7 @@ mod provider_request_tests {
             user_agent: "CodexMate-Test/1.0".to_string(),
             max_context: 0,
             supports_large_context: false,
+            max_concurrent: 2,
         };
 
         let request = provider_post_request(
@@ -3714,6 +3775,7 @@ mod provider_request_tests {
             user_agent: String::new(),
             max_context: 0,
             supports_large_context: false,
+            max_concurrent: 2,
         };
 
         let request = provider_post_request(
