@@ -738,6 +738,17 @@ pub async fn open_routed_proxy_request(
         chat_request["model"] = Value::String(decision.target_model.clone());
     }
 
+    // 记录上游请求的模型名
+    let _ = crate::diagnostic_log::append_diagnostic_log(
+        "helper.protocol_proxy_upstream_model",
+        json!({
+            "source_model": context.model,
+            "target_model": decision.target_model,
+            "provider": provider.id,
+            "rule": decision.rule_name,
+            "base_url": provider.base_url,
+        }),
+    );
 
     // ── 下游并发限流 ──
     let semaphore = provider_semaphore(&provider.id, provider.max_concurrent);
