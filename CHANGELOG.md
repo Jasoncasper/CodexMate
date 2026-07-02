@@ -1,6 +1,13 @@
 # 更新日志
 
 
+## v1.0.8 (2026-07-02)
+
+### Bug 修复
+
+- 修复智能路由「测试连接」对自建网关（如 ai.shebao.net/gateway）返回 404 的问题，ChatCompletions 协议改用 POST /chat/completions 轻量探活，不再依赖不一定存在的 /models 端点
+- 修复 `api_key_masked_str` 对包含多字节 Unicode 字符的 API Key 切片时可能 panic 的问题，改为按字符边界安全截取
+
 ## v1.0.7 (2026-06-25)
 
 ### Bug 修复

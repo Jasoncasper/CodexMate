@@ -1068,22 +1068,54 @@ pub async fn test_smart_provider(
             },
         };
     }
-    let test_url =
-        codexmate_core::protocol_proxy::models_url_with(&base_url, provider.use_full_url);
     let user_agent = if provider.user_agent.trim().is_empty() {
         format!("CodexMate/{}", codexmate_core::version::VERSION)
     } else {
         provider.user_agent.trim().to_string()
     };
     let client = reqwest::Client::new();
-    match client
-        .get(&test_url)
-        .bearer_auth(&api_key)
-        .header(reqwest::header::USER_AGENT, user_agent)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-    {
+    use codexmate_core::router::ProviderProtocol;
+    // ChatCompletions 协议用轻量 chat completions 请求探活，避免依赖自建网关不一定提供的 /models 端点；
+    // Responses / Anthropic / Custom 等标准 API 通常提供 /models 端点，保持 GET 探活。
+    let (test_url, request_builder) = match provider.protocol {
+        ProviderProtocol::ChatCompletions => {
+            let url = codexmate_core::protocol_proxy::chat_completions_url_with(
+                &base_url,
+                provider.use_full_url,
+            );
+            let model = if provider.target_model.trim().is_empty() {
+                provider.id.clone()
+            } else {
+                provider.target_model.trim().to_string()
+            };
+            let body = serde_json::json!({
+                "model": model,
+                "messages": [{"role":"user","content":"ping"}],
+                "max_tokens": 1,
+                "stream": false
+            });
+            let builder = client
+                .post(&url)
+                .bearer_auth(&api_key)
+                .header(reqwest::header::USER_AGENT, &user_agent)
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(15));
+            (url, builder)
+        }
+        _ => {
+            let url = codexmate_core::protocol_proxy::models_url_with(
+                &base_url,
+                provider.use_full_url,
+            );
+            let builder = client
+                .get(&url)
+                .bearer_auth(&api_key)
+                .header(reqwest::header::USER_AGENT, &user_agent)
+                .timeout(std::time::Duration::from_secs(10));
+            (url, builder)
+        }
+    };
+    match request_builder.send().await {
         Ok(response) => {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();

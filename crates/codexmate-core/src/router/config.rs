@@ -190,15 +190,30 @@ user_agent = "CodexMate-Test/1.0"
 
         assert!(serialized.contains("user_agent = \"CodexMate-Test/1.0\""));
     }
+
+    #[test]
+    fn api_key_masking_handles_unicode_without_panic() {
+        assert_eq!(api_key_masked_str("Bearer 认证"), "Bear...r 认证");
+        assert_eq!(api_key_masked_str("认证"), "****");
+    }
 }
 
 pub fn api_key_masked_str(key: &str) -> String {
     if key.is_empty() {
         String::new()
-    } else if key.len() <= 8 {
+    } else if key.chars().count() <= 8 {
         "****".to_string()
     } else {
-        format!("{}...{}", &key[..4], &key[key.len() - 4..])
+        let prefix: String = key.chars().take(4).collect();
+        let suffix: String = key
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("{prefix}...{suffix}")
     }
 }
 
